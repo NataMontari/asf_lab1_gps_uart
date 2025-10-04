@@ -22,7 +22,9 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include <string.h>
+#include <stdlib.h>
+#include <stdio.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -34,6 +36,7 @@
 /* USER CODE BEGIN PD */
 #define RxBuffer_SIZE 64  //configure uart receive buffer size
 #define DataBuffer_SIZE 512 //gather a few rxBuffer frames before parsing
+#define CLI_SIZE 15
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -59,6 +62,13 @@ uint16_t oldPos = 0;
 uint16_t newPos = 0;
 uint8_t RxBuffer[RxBuffer_SIZE];
 uint8_t DataBuffer[DataBuffer_SIZE];
+
+uint8_t cli_byte;
+char cli_buffer[CLI_SIZE];
+uint8_t cli_index = 0;
+uint8_t cli_ready = 0;
+char command[CLI_SIZE];
+uint8_t raw_mode_on = 0;
 
 typedef struct NMEA_DATA {
     double latitude; //latitude in degrees with decimal places
@@ -100,23 +110,216 @@ void process_nmea_sentence(char* sentence);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+void process_commands(char* cmd){
+	if(strcmp(cmd, "VER") == 0){
+		char str[128];
+		sprintf(str, "FW v1.0, build: %s %s, UART2 9600\r\n", __DATE__, __TIME__);
+		HAL_UART_Transmit(&huart2, (uint8_t*)str, strlen(str), 1000);
+		cli_ready = 0;
+	}else if (strcmp(cmd, "GET POS") == 0) {
+		nmea_parse(&myData, DataBuffer);
+	    char buf[32];
 
-void nmea_GPGLL(GPS *gps_data, char* sentence) {
-    char msg[128];
-    snprintf(msg, sizeof(msg), "[1-GPGLL] %s\r\n", sentence);
-    HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+	    // Latitude
+	    HAL_UART_Transmit(&huart2, (uint8_t*)"Lat: ", 5, 100);
+	    sprintf(buf, "%f\r\n", myData.latitude);
+	    HAL_UART_Transmit(&huart2, (uint8_t*)buf, strlen(buf), 100);
+
+	    // Latitude side
+	    HAL_UART_Transmit(&huart2, (uint8_t*)"Lat side: ", 10, 100);
+	    sprintf(buf, "%c\r\n", myData.latSide);
+	    HAL_UART_Transmit(&huart2, (uint8_t*)buf, strlen(buf), 100);
+
+	    // Longitude
+	    HAL_UART_Transmit(&huart2, (uint8_t*)"Lon: ", 5, 100);
+	    sprintf(buf, "%f\r\n", myData.longitude);
+	    HAL_UART_Transmit(&huart2, (uint8_t*)buf, strlen(buf), 100);
+
+	    // Longitude side
+	    HAL_UART_Transmit(&huart2, (uint8_t*)"Lon side: ", 10, 100);
+	    sprintf(buf, "%c\r\n", myData.lonSide);
+	    HAL_UART_Transmit(&huart2, (uint8_t*)buf, strlen(buf), 100);
+
+	    // Fix
+	    HAL_UART_Transmit(&huart2, (uint8_t*)"Fix: ", 5, 100);
+	    sprintf(buf, "%d\r\n", myData.fix);
+	    HAL_UART_Transmit(&huart2, (uint8_t*)buf, strlen(buf), 100);
+
+	    // Satellite count
+	    HAL_UART_Transmit(&huart2, (uint8_t*)"Sats: ", 6, 100);
+	    sprintf(buf, "%d\r\n", myData.satelliteCount);
+	    HAL_UART_Transmit(&huart2, (uint8_t*)buf, strlen(buf), 100);
+		cli_ready = 0;
+    } else if (strcmp(cmd, "GET TIME") == 0) {
+    	nmea_parse(&myData, DataBuffer);
+        char str[64];
+        sprintf(str, "UTC:%s, stale:%s\r\n", myData.lastMeasure,
+            (myData.fix ? "no" : "yes"));
+        HAL_UART_Transmit(&huart2, (uint8_t*)str, strlen(str), 100);
+		cli_ready = 0;
+    } else if (strncmp(cmd, "RAW ", 4) == 0) {
+        if (strcmp(cmd+4, "ON") == 0) raw_mode_on = 1;
+        HAL_UART_Transmit(&huart2, (uint8_t*)"RAW mode updated\r\n", 17, 100);
+        raw_mode_on = 1;
+        while(raw_mode_on){
+        	nmea_parse(&myData, DataBuffer);
+        }
+    } else {
+        HAL_UART_Transmit(&huart2, (uint8_t*)"Unknown command\r\n", 17, 100);
+		cli_ready = 0;
+    }
 }
 
-void nmea_GPGSA(GPS *gps_data, char* sentence) {
-    char msg[128];
-    snprintf(msg, sizeof(msg), "[2-GPGSA] %s\r\n", sentence);
-    HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+int gps_checksum(char *nmea_data)
+{
+    //if you point a string with less than 5 characters the function will read outside of scope and crash the mcu.
+    if(strlen(nmea_data) < 5) return 0;
+    char recv_crc[2];
+    recv_crc[0] = nmea_data[strlen(nmea_data) - 4];
+    recv_crc[1] = nmea_data[strlen(nmea_data) - 3];
+    int crc = 0;
+    int i;
+
+    //exclude the CRLF plus CRC with an * from the end
+    for (i = 0; i < strlen(nmea_data) - 5; i ++) {
+        crc ^= nmea_data[i];
+    }
+    int receivedHash = strtol(recv_crc, NULL, 16);
+    if (crc == receivedHash) {
+        return 1;
+    }
+    else{
+        return 0;
+    }
 }
 
-void nmea_GPGGA(GPS *gps_data, char* sentence) {
-    char msg[128];
-    snprintf(msg, sizeof(msg), "[3-GPGGA] %s\r\n", sentence);
-    HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+int nmea_GPGLL(GPS *gps_data, char*inputString) {
+    char *values[25];
+    int counter = 0;
+    memset(values, 0, sizeof(values));
+    char *marker = strtok(inputString, ",");
+    while (marker != NULL) {
+        values[counter++] = malloc(strlen(marker) + 1); //free later!!!!!!
+        strcpy(values[counter - 1], marker);
+        marker = strtok(NULL, ",");
+    }
+    char latSide = values[2][0];
+    if (latSide == 'S' || latSide == 'N') { //check if data is sorta intact
+        char lat_d[2];
+        char lat_m[7];
+        for (int z = 0; z < 2; z++) lat_d[z] = values[1][z];
+        for (int z = 0; z < 6; z++) lat_m[z] = values[1][z + 2];
+
+        int lat_deg_strtol = strtol(lat_d, NULL, 10);
+        float lat_min_strtof = strtof(lat_m, NULL);
+        double lat_deg = lat_deg_strtol + lat_min_strtof / 60;
+
+        char lon_d[3];
+        char lon_m[7];
+        char lonSide = values[4][0];
+        for (int z = 0; z < 3; z++) lon_d[z] = values[3][z];
+        for (int z = 0; z < 6; z++) lon_m[z] = values[3][z + 3];
+
+        int lon_deg_strtol = strtol(lon_d, NULL, 10);
+        float lon_min_strtof = strtof(lon_m, NULL);
+        double lon_deg = lon_deg_strtol + lon_min_strtof / 60;
+        //confirm that we aren't on null island
+        if(lon_deg_strtol == 0 || lon_min_strtof == 0 || lat_deg_strtol == 0 || lat_min_strtof == 0) {
+            for(int i = 0; i<counter; i++) free(values[i]);
+            return 0;
+        }
+        else{
+            gps_data->latitude = lat_deg;
+            gps_data->longitude = lon_deg;
+            gps_data->latSide = latSide;
+            gps_data->lonSide = lonSide;
+            for(int i = 0; i<counter; i++) free(values[i]);
+            return 1;
+        }
+    }
+    else return 0;
+}
+
+int nmea_GPGSA(GPS *gps_data, char*inputString){
+    char *values[25];
+    int counter = 0;
+    memset(values, 0, sizeof(values));
+    char *marker = strtok(inputString, ",");
+    while (marker != NULL) {
+        values[counter++] = malloc(strlen(marker) + 1); //free later!!!!!!
+        strcpy(values[counter - 1], marker);
+        marker = strtok(NULL, ",");
+    }
+    int fix = strtol(values[2], NULL, 10);
+    gps_data->fix = fix > 1 ? 1 : 0;
+    int satelliteCount = 0;
+    for(int i=3; i<15; i++){
+        if(values[i][0] != '\0'){
+            satelliteCount++;
+        }
+    }
+    gps_data->satelliteCount = satelliteCount;
+    for(int i=0; i<counter; i++) free(values[i]);
+    return 1;
+}
+
+int nmea_GPGGA(GPS *gps_data, char*inputString) {
+    char *values[25];
+    int counter = 0;
+    memset(values, 0, sizeof(values));
+    char *marker = strtok(inputString, ",");
+    while (marker != NULL) {
+        values[counter++] = malloc(strlen(marker) + 1); //free later!!!!!!
+        strcpy(values[counter - 1], marker);
+        marker = strtok(NULL, ",");
+    }
+    char lonSide = values[5][0];
+    char latSide = values[3][0];
+    strcpy(gps_data->lastMeasure, values[1]);
+    if(latSide == 'S' || latSide == 'N'){
+        char lat_d[2];
+        char lat_m[7];
+        for (int z = 0; z < 2; z++) lat_d[z] = values[2][z];
+        for (int z = 0; z < 6; z++) lat_m[z] = values[2][z + 2];
+
+        int lat_deg_strtol = strtol(lat_d, NULL, 10);
+        float lat_min_strtof = strtof(lat_m, NULL);
+        double lat_deg = lat_deg_strtol + lat_min_strtof / 60;
+
+        char lon_d[3];
+        char lon_m[7];
+
+        for (int z = 0; z < 3; z++) lon_d[z] = values[4][z];
+        for (int z = 0; z < 6; z++) lon_m[z] = values[4][z + 3];
+
+        int lon_deg_strtol = strtol(lon_d, NULL, 10);
+        float lon_min_strtof = strtof(lon_m, NULL);
+        double lon_deg = lon_deg_strtol + lon_min_strtof / 60;
+
+        if(lat_deg!=0 && lon_deg!=0 && lat_deg<90 && lon_deg<180){
+            gps_data->latitude = lat_deg;
+            gps_data->latSide = latSide;
+            gps_data->longitude = lon_deg;
+            gps_data->lonSide = lonSide;
+            float altitude = strtof(values[9], NULL);
+            gps_data->altitude = altitude!=0 ? altitude : gps_data->altitude;
+            gps_data->satelliteCount = strtol(values[7], NULL, 10);
+
+            int fixQuality = strtol(values[6], NULL, 10);
+            gps_data->fix = fixQuality > 0 ? 1 : 0;
+
+            float hdop = strtof(values[8], NULL);
+            gps_data->hdop = hdop!=0 ? hdop : gps_data->hdop;
+        }
+        else {
+            for(int i=0; i<counter; i++) free(values[i]);
+            return 0;
+        }
+
+    }
+
+    for(int i=0; i<counter; i++) free(values[i]);
+    return 1;
 }
 
 void nmea_parse(GPS *gps_data, uint8_t *buffer){
@@ -135,22 +338,22 @@ void nmea_parse(GPS *gps_data, uint8_t *buffer){
         token = strtok(NULL, "$");
     }
     for(int i = 0; i<cnt; i++){
-       if(strstr(data[i], "\r\n")!=NULL){
-           if(strstr(data[i], "GNGLL")!=NULL){
-               nmea_GPGLL(gps_data, data[i]);
-           }
-           else if(strstr(data[i], "GPGSA")!=NULL){
-               nmea_GPGSA(gps_data, data[i]);
-           }
-           else if(strstr(data[i], "GNGGA")!=NULL){
-               nmea_GPGGA(gps_data, data[i]);
-           }
-           else{
-        	    char msg[128];
-        	    snprintf(msg, sizeof(msg), "[other] %s\r\n", data[i]);
-        	    HAL_UART_Transmit(&huart2, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
-           }
-       }
+    	if (!raw_mode_on){
+		   if(strstr(data[i], "\r\n")!=NULL && gps_checksum(data[i])){
+			   if(strstr(data[i], "GNGLL")!=NULL ){
+				   nmea_GPGLL(gps_data, data[i]);
+			   }
+			   else if(strstr(data[i], "GPGSA")!=NULL){
+				   nmea_GPGSA(gps_data, data[i]);
+			   }
+			   else if(strstr(data[i], "GNGGA")!=NULL){
+				   nmea_GPGGA(gps_data, data[i]);
+			   }
+		   }
+    	}
+    	else{
+    		HAL_UART_Transmit(&huart2, data[i], strlen(data[i]), 1000);
+    	}
 
     }
     for(int i = 0; i<cnt; i++) free(data[i]);
@@ -161,26 +364,64 @@ void nmea_parse(GPS *gps_data, uint8_t *buffer){
 
 void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
 {
-    oldPos = newPos; //keep track of the last position in the buffer
-    if(oldPos + Size > DataBuffer_SIZE){ //if the buffer is full, parse it, then reset the buffer
+	if(huart->Instance == USART1){
+		oldPos = newPos; //keep track of the last position in the buffer
+		if(oldPos + Size > DataBuffer_SIZE){ //if the buffer is full, parse it, then reset the buffer
 
-        uint16_t datatocopy = DataBuffer_SIZE-oldPos;  // find out how much space is left in the main buffer
-        memcpy ((uint8_t *)DataBuffer+oldPos, RxBuffer, datatocopy);  // copy data in that remaining space
+			uint16_t datatocopy = DataBuffer_SIZE-oldPos;  // find out how much space is left in the main buffer
+			memcpy ((uint8_t *)DataBuffer+oldPos, RxBuffer, datatocopy);  // copy data in that remaining space
 
-        oldPos = 0;  // point to the start of the buffer
-        memcpy ((uint8_t *)DataBuffer, (uint8_t *)RxBuffer+datatocopy, (Size-datatocopy));  // copy the remaining data
-        newPos = (Size-datatocopy);  // update the position
-    }
-    else{
-        memcpy((uint8_t *)DataBuffer+oldPos, RxBuffer, Size); //copy received data to the buffer
-        newPos = Size+oldPos; //update buffer position
+			oldPos = 0;  // point to the start of the buffer
+			memcpy ((uint8_t *)DataBuffer, (uint8_t *)RxBuffer+datatocopy, (Size-datatocopy));  // copy the remaining data
+			newPos = (Size-datatocopy);  // update the position
+		}
+		else{
+			memcpy((uint8_t *)DataBuffer+oldPos, RxBuffer, Size); //copy received data to the buffer
+			newPos = Size+oldPos; //update buffer position
 
-    }
-    HAL_UARTEx_ReceiveToIdle_DMA(&huart1, (uint8_t *)RxBuffer, RxBuffer_SIZE); //re-enable the DMA interrupt
-    __HAL_DMA_DISABLE_IT(&hdma_usart1_rx, DMA_IT_HT); //disable the half transfer interrupt
+		}
+		HAL_UARTEx_ReceiveToIdle_DMA(&huart1, (uint8_t *)RxBuffer, RxBuffer_SIZE); //re-enable the DMA interrupt
+		__HAL_DMA_DISABLE_IT(&hdma_usart1_rx, DMA_IT_HT); //disable the half transfer interrupt
+		}
 }
 
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+    if (huart->Instance == USART2) // твій порт
+    {
+    	raw_mode_on = 0;
+		cli_ready = 0;
+    	HAL_UART_Transmit(&huart2, &cli_byte, 1, 1000);
+        if (cli_byte == '\r' || cli_byte == '\n')
+        {
+            cli_buffer[cli_index] = '\0';
+            memcpy(command, cli_buffer, cli_index + 1);
+            HAL_UART_Transmit(&huart2, (uint8_t*)"\r\n", 2, 100);
+            cli_ready = 1;
+            cli_index = 0;
 
+        }
+        else
+        {
+            if (cli_index < CLI_SIZE - 1){
+
+                cli_buffer[cli_index++] = cli_byte;
+            }
+            else
+				{
+					cli_buffer[cli_index] = '\0';
+
+					char msg[] = "\r\nInvalid command\r\n";
+					HAL_UART_Transmit(&huart2, (uint8_t *)msg, strlen(msg), 1000);
+
+					cli_index = 0;
+				}
+
+        }
+
+    }
+    HAL_UART_Receive_IT(&huart2, &cli_byte, 1);
+}
 
 /* USER CODE END 0 */
 
@@ -232,6 +473,8 @@ int main(void)
   HAL_UARTEx_ReceiveToIdle_DMA(&huart1, (uint8_t *)RxBuffer, RxBuffer_SIZE);
   __HAL_DMA_DISABLE_IT(&hdma_usart1_rx, DMA_IT_HT);
   int Serialcnt = 0;
+  HAL_UART_Receive_IT(&huart2, &cli_byte, 1);
+
 
   /* USER CODE END 2 */
 
@@ -239,9 +482,33 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	    nmea_parse(&myData, DataBuffer);
-	    HAL_Delay(1500);
-	    Serialcnt++;
+	  if (cli_ready){
+		  process_commands(command);
+	  }
+//	    nmea_parse(&myData, DataBuffer);
+//        char * str = (char*)malloc(sizeof(char)*400);
+//
+//
+//        // Формування основного рядка
+//        int len = sprintf(str,
+//            "\r\n%d: Lat: %.6f %c, Lon: %.6f %c, Alt: %.2f m, Satellites: %d, HDOP: %.2f\r\n"
+//            "UTC Time: %s, Fix: %d\r\n",
+//            Serialcnt,
+//            myData.latitude, myData.latSide,
+//            myData.longitude, myData.lonSide,
+//            myData.altitude,
+//            myData.satelliteCount,
+//            myData.hdop,
+//            myData.lastMeasure,
+//            myData.fix
+//        );
+//
+//        HAL_UART_Transmit(&huart2, (uint8_t *)str, len, 1000);
+//        //Transmit last measure time for troubleshooting
+//        HAL_UART_Transmit(&huart2, (uint8_t *)myData.lastMeasure, strlen(myData.lastMeasure), 1000);
+//        HAL_Delay(1000);
+//        free(str);
+//	    Serialcnt++;
     /* USER CODE END WHILE */
     MX_USB_HOST_Process();
 
