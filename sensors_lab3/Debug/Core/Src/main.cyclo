@@ -1,0 +1,15 @@
+../Core/Src/main.c:104:6:process_commands	8
+../Core/Src/main.c:164:10:get_unique_id	1
+../Core/Src/main.c:168:6:display_gps_data	1
+../Core/Src/main.c:199:6:HAL_UARTEx_RxEventCallback	3
+../Core/Src/main.c:222:6:HAL_UART_RxCpltCallback	5
+../Core/Src/main.c:266:5:main	2
+../Core/Src/main.c:353:6:SystemClock_Config	3
+../Core/Src/main.c:399:13:MX_I2C1_Init	2
+../Core/Src/main.c:433:13:MX_I2S2_Init	2
+../Core/Src/main.c:467:13:MX_SPI1_Init	2
+../Core/Src/main.c:505:13:MX_USART1_UART_Init	2
+../Core/Src/main.c:538:13:MX_USART2_UART_Init	2
+../Core/Src/main.c:569:13:MX_DMA_Init	1
+../Core/Src/main.c:587:13:MX_GPIO_Init	1
+../Core/Src/main.c:700:6:Error_Handler	1
