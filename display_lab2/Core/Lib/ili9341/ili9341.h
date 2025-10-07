@@ -17,12 +17,12 @@
 #define ILI9341_SPI_PORT hspi1
 extern SPI_HandleTypeDef ILI9341_SPI_PORT;
 
-#define ILI9341_RES_Pin       GPIO_PIN_7
-#define ILI9341_RES_GPIO_Port GPIOC
-#define ILI9341_CS_Pin        GPIO_PIN_6
-#define ILI9341_CS_GPIO_Port  GPIOB
-#define ILI9341_DC_Pin        GPIO_PIN_9
-#define ILI9341_DC_GPIO_Port  GPIOA
+#define ILI9341_RES_Pin       GPIO_PIN_2
+#define ILI9341_RES_GPIO_Port GPIOB
+#define ILI9341_CS_Pin        GPIO_PIN_4
+#define ILI9341_CS_GPIO_Port  GPIOA
+#define ILI9341_DC_Pin        GPIO_PIN_0
+#define ILI9341_DC_GPIO_Port  GPIOB
 
 // default orientation
 #define ILI9341_WIDTH  240
